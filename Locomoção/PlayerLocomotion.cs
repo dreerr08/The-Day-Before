@@ -10,6 +10,11 @@ public class PlayerLocomotion : MonoBehaviour
     public bool showDebugLogs = false;
 
     // --- CONFIGURAÇÕES ---
+    [Header("Input Config")]
+    [Range(0f, 0.5f)]
+    [Tooltip("Zona morta do analógico.")]
+    public float inputThreshold = 0.2f;
+
     [Header("Velocidades")]
     public float walkSpeed = 2.0f;
     [Tooltip("Velocidade ao andar para trás")]
@@ -17,7 +22,6 @@ public class PlayerLocomotion : MonoBehaviour
     public float runSpeed = 6.0f;
 
     [Header("Correção de Lock-on")]
-    [Tooltip("Força que puxa o player para o inimigo ao girar, para não se afastar.")]
     public float orbitCorrectionStrength = 2.0f;
 
     public float gravity = -9.81f;
@@ -57,6 +61,11 @@ public class PlayerLocomotion : MonoBehaviour
     // --- CÁLCULOS ---
     private Vector3 _playerVelocity;
     private bool _isGrounded;
+
+    // --- NOVO: DIREÇÃO TRAVADA ---
+    private Vector3 _lockedCameraForward;
+    private Vector3 _lockedCameraRight;
+    private bool _isMoveLocked = false;
 
     // Hashes
     private int _inputXHash;
@@ -123,6 +132,9 @@ public class PlayerLocomotion : MonoBehaviour
         {
             bool jumpPressed = _jumpAction != null && _jumpAction.WasPressedThisFrame();
             Vector2 inputVector = _moveAction.ReadValue<Vector2>();
+
+            if (inputVector.magnitude < inputThreshold) inputVector = Vector2.zero;
+
             bool isStandingStill = inputVector.sqrMagnitude == 0;
 
             if (jumpPressed && isStandingStill)
@@ -139,23 +151,66 @@ public class PlayerLocomotion : MonoBehaviour
 
     void HandleMovementAndRotation()
     {
-        Vector2 inputVector = _moveAction.ReadValue<Vector2>();
+        Vector2 rawInput = _moveAction.ReadValue<Vector2>();
+        Vector2 inputVector = rawInput.magnitude > inputThreshold ? rawInput : Vector2.zero;
 
         if (inputVector.sqrMagnitude > 1) inputVector.Normalize();
 
         bool isMoving = inputVector.sqrMagnitude > 0;
         bool isSprinting = _sprintAction != null && _sprintAction.IsPressed();
+
+        // Verifica se está andando para trás (zona negativa do Y)
         bool isMovingBackwards = inputVector.y < -0.1f;
 
-        // CÁLCULO DE DIREÇÃO DA CÂMERA
-        Vector3 cameraForward = _cameraTransform.forward;
-        Vector3 cameraRight = _cameraTransform.right;
-        cameraForward.y = 0;
-        cameraRight.y = 0;
-        cameraForward.Normalize();
-        cameraRight.Normalize();
+        // --- LÓGICA DE TRAVA DE DIREÇÃO (Input Frame Locking) ---
+        // Se começarmos a andar para trás e não estivermos travados, salvamos a direção atual.
+        if (isMovingBackwards && !_isMoveLocked && !IsLockedOn)
+        {
+            _isMoveLocked = true;
+            _lockedCameraForward = _cameraTransform.forward;
+            _lockedCameraRight = _cameraTransform.right;
 
-        Vector3 moveDirection = cameraForward * inputVector.y + cameraRight * inputVector.x;
+            // Zera Y para manter plano horizontal
+            _lockedCameraForward.y = 0;
+            _lockedCameraRight.y = 0;
+            _lockedCameraForward.Normalize();
+            _lockedCameraRight.Normalize();
+        }
+        // Se pararmos de andar para trás (ou pararmos de mover), solta a trava.
+        else if (!isMovingBackwards)
+        {
+            _isMoveLocked = false;
+        }
+
+        // CÁLCULO DE DIREÇÃO
+        Vector3 moveDirection = Vector3.zero;
+
+        if (IsLockedOn)
+        {
+            // No Lock-on, sempre relativo ao alvo, ignoramos a trava de câmera
+            Vector3 cameraForward = _cameraTransform.forward;
+            Vector3 cameraRight = _cameraTransform.right;
+            cameraForward.y = 0; cameraRight.y = 0;
+            cameraForward.Normalize(); cameraRight.Normalize();
+
+            moveDirection = cameraForward * inputVector.y + cameraRight * inputVector.x;
+        }
+        else if (_isMoveLocked)
+        {
+            // --- AQUI ESTÁ A MÁGICA ---
+            // Usamos os vetores salvos (_locked) em vez dos atuais da câmera
+            moveDirection = _lockedCameraForward * inputVector.y + _lockedCameraRight * inputVector.x;
+        }
+        else
+        {
+            // Movimento Normal (frente/lados) segue a câmera em tempo real
+            Vector3 cameraForward = _cameraTransform.forward;
+            Vector3 cameraRight = _cameraTransform.right;
+            cameraForward.y = 0; cameraRight.y = 0;
+            cameraForward.Normalize(); cameraRight.Normalize();
+
+            moveDirection = cameraForward * inputVector.y + cameraRight * inputVector.x;
+        }
 
         if (isMoving || IsLockedOn)
         {
@@ -163,25 +218,25 @@ public class PlayerLocomotion : MonoBehaviour
 
             if (IsLockedOn)
             {
+                // ... (Mantém lógica de LockOn inalterada) ...
                 Vector3 directionToTarget = _currentTarget.position - transform.position;
                 directionToTarget.y = 0;
 
-                // ROTAÇÃO
                 if (directionToTarget != Vector3.zero)
                 {
                     Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
                     transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
                 }
 
-                // --- CORREÇÃO ORBITAL ---
                 if (isMoving && Mathf.Abs(inputVector.x) > 0.1f && Mathf.Abs(inputVector.y) < 0.5f)
                 {
                     Vector3 pullDirection = directionToTarget.normalized;
                     moveDirection += pullDirection * orbitCorrectionStrength * Time.deltaTime;
                 }
             }
-            else if (isMoving && cameraForward != Vector3.zero)
+            else if (isMoving && moveDirection != Vector3.zero)
             {
+                // Rotação Padrão (agora usando o moveDirection travado quando recua)
                 Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
                 transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
             }
@@ -212,14 +267,19 @@ public class PlayerLocomotion : MonoBehaviour
 
             if (_isGrounded && !IsLockedOn)
             {
-                HandleTurnInPlace(cameraForward);
+                // Nota: TurnInPlace usa cameraForward atual, pode girar o char parado. 
+                // Se quiser travar isso também, avise!
+                Vector3 currentCamFwd = _cameraTransform.forward;
+                currentCamFwd.y = 0;
+                currentCamFwd.Normalize();
+                HandleTurnInPlace(currentCamFwd);
             }
         }
     }
 
-    // --- A FUNÇÃO PERDIDA! ESTÁ AQUI AGORA :) ---
     void HandleTurnInPlace(Vector3 cameraForward)
     {
+        // ... (Mantém inalterado) ...
         if (_animator.IsInTransition(0)) return;
 
         float angleDifference = Vector3.SignedAngle(transform.forward, cameraForward, Vector3.up);

@@ -16,7 +16,12 @@ public class CameraAutoAlign : MonoBehaviour
     public float forwardAlignSpeed = 20.0f;
     public float runAlignSpeed = 120.0f;
 
-    // REMOVI o backwardAlignSpeed pois ele precisa ser ZERO para evitar o loop.
+    [Tooltip("Velocidade de alinhamento após esperar os 5 segundos andando para trás.")]
+    public float backwardAlignSpeed = 15.0f; // Um pouco mais lento para não enjoar
+
+    [Header("Delay Inteligente")]
+    [Tooltip("Tempo (segundos) andando para trás antes da câmera decidir girar.")]
+    public float backwardAlignDelay = 5.0f; // <--- O PEDIDO DO MENTOR: 5 Segundos!
 
     [Header("Limites")]
     public float strafeThreshold = 0.5f;
@@ -28,6 +33,7 @@ public class CameraAutoAlign : MonoBehaviour
     private InputAction _sprintAction;
 
     private float _lastManualInputTime;
+    private float _backwardMovementTimer; // Contador para o delay
 
     void Awake()
     {
@@ -55,11 +61,12 @@ public class CameraAutoAlign : MonoBehaviour
 
     void HandleAutoAlign()
     {
-        // 1. Respeita input manual
+        // 1. Respeita input manual do mouse/analógico direito
         Vector2 lookInput = _lookAction.ReadValue<Vector2>();
         if (lookInput.sqrMagnitude > 0.01f)
         {
             _lastManualInputTime = Time.time;
+            _backwardMovementTimer = 0f; // Reseta timer se mexer a câmera manualmente
             return;
         }
 
@@ -69,28 +76,45 @@ public class CameraAutoAlign : MonoBehaviour
         Vector2 moveInput = _moveAction.ReadValue<Vector2>();
         bool isMoving = moveInput.sqrMagnitude > 0.1f;
 
-        if (!isMoving) return;
+        if (!isMoving)
+        {
+            _backwardMovementTimer = 0f; // Reseta se parar
+            return;
+        }
 
         bool isSprinting = _sprintAction.IsPressed();
         float currentAlignSpeed = 0f;
 
-        // --- LÓGICA ANTI-LOOP ---
+        // --- LÓGICA DE ALINHAMENTO ---
 
-        // Se estiver andando para TRÁS (Input Y negativo), PARE TUDO.
-        // Isso permite o personagem correr em direção à tela sem a câmera girar loucamente.
+        // CASO 1: Andando para TRÁS (Input Y Negativo)
         if (moveInput.y < -0.1f)
         {
-            currentAlignSpeed = 0f; // <--- AQUI ESTÁ A CORREÇÃO (Zona Morta)
+            // Começa a contar o tempo
+            _backwardMovementTimer += Time.deltaTime;
+
+            if (_backwardMovementTimer > backwardAlignDelay)
+            {
+                // Já passou dos 5 segundos, libera o giro!
+                currentAlignSpeed = backwardAlignSpeed;
+            }
+            else
+            {
+                // Ainda não deu o tempo, mantenha a câmera parada (zona morta de rotação)
+                currentAlignSpeed = 0f;
+            }
         }
-        // Se estiver andando muito para os LADOS (Strafe)
+        // CASO 2: Andando muito para os LADOS (Strafe)
         else if (Mathf.Abs(moveInput.x) > strafeThreshold)
         {
-            currentAlignSpeed = 0f; // Também não gira no strafe puro
+            _backwardMovementTimer = 0f; // Mudou a intenção, reseta
+            currentAlignSpeed = 0f;      // Não gira no strafe puro
         }
-        // Se estiver andando para FRENTE (Input Y Positivo)
+        // CASO 3: Andando para FRENTE (Input Y Positivo)
         else
         {
-            // Aqui sim aplicamos a velocidade
+            _backwardMovementTimer = 0f; // Mudou a intenção, reseta
+            // Aplica a velocidade normal
             currentAlignSpeed = isSprinting ? runAlignSpeed : forwardAlignSpeed;
         }
 
