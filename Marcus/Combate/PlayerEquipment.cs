@@ -28,6 +28,8 @@ public class PlayerEquipment : MonoBehaviour
     // Estado Interno
     private bool _isEquipped = false;
 
+    public bool IsEquipped => _isEquipped;
+
     // Otimização (Hashes são mais rápidos que strings)
     private int _equipTriggerHash;
     private int _isArmedBoolHash;

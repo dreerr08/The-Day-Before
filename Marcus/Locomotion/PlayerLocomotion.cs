@@ -1,36 +1,48 @@
-﻿using System.Diagnostics;
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
 public class PlayerLocomotion : MonoBehaviour
 {
-    // --- CONFIGURAÇÕES ---
-    [Header("Input Config")]
-    [Tooltip("Zona morta do analógico para evitar drift.")]
-    public float inputThreshold = 0.2f;
+    // --- DEBUG ---
+    [Header("Debug")]
+    public bool showDebugLogs = false;
 
+    // --- CONFIGURAÇÕES ---
     [Header("Velocidades")]
     public float walkSpeed = 2.0f;
-    public float backwardsSpeed = 1.5f; // Andar para trás
+    [Tooltip("Velocidade ao andar para trás")]
+    public float backwardsSpeed = 1.5f;
     public float runSpeed = 6.0f;
 
-    [Header("Física")]
+    [Header("Combate / Restrição")] // <--- NOVO
+    [Tooltip("Velocidade permitida enquanto ataca (Ex: 0.1 para deslizar levemente)")]
+    public float attackingSpeed = 0.1f;
+
+    [Header("Correção de Lock-on")]
+    [Tooltip("Força que puxa o player para o inimigo ao girar.")]
+    public float orbitCorrectionStrength = 2.0f;
+
     public float gravity = -9.81f;
+
+    [Header("Pulo")]
     public float jumpHeight = 1.2f;
 
-    [Header("Rotação")]
+    [Header("Rotacao e Turn In Place")]
     public float rotationSpeed = 15.0f;
+    public float turnThreshold = 45.0f;
+    public float turnInPlaceSpeed = 5.0f;
 
-    [Header("Animação (Nomes)")]
+    [Header("Animacao")]
     public string inputXName = "InputX";
     public string inputYName = "InputY";
-    public string jumpTrigger = "Jump";
-    public string dieTrigger = "Die";
+    public string deathTriggerName = "Die";
+    public string jumpTriggerName = "Jump";
 
-    [Header("Animação (Ajustes)")]
-    public float animationSmoothTime = 0.1f;
+    public float walkIntensity = 0.5f;
+    public float runIntensity = 1.0f;
+    public float animationSmoothTime = 0.08f;
 
     // --- REFERÊNCIAS ---
     private CharacterController _characterController;
@@ -42,13 +54,18 @@ public class PlayerLocomotion : MonoBehaviour
     private InputAction _sprintAction;
     private InputAction _jumpAction;
 
-    // --- ESTADO ---
-    private Transform _lockOnTarget;
+    // --- ESTADOS INTERNOS ---
+    private Transform _currentTarget;
     private Vector3 _playerVelocity;
     private bool _isGrounded;
     private bool _isDead = false;
 
-    public bool IsLockedOn => _lockOnTarget != null;
+    // ESTADO DE RESTRIÇÃO
+    private bool _isMovementRestricted = false;
+
+    // --- PROPRIEDADES PÚBLICAS ---
+    public bool IsLockedOn => _currentTarget != null;
+    public Transform CurrentLockOnTarget => _currentTarget;
 
     void Awake()
     {
@@ -56,10 +73,8 @@ public class PlayerLocomotion : MonoBehaviour
         _animator = GetComponent<Animator>();
         _playerInput = GetComponent<PlayerInput>();
 
-        if (Camera.main != null)
-            _cameraTransform = Camera.main.transform;
-        else
-            UnityEngine.Debug.LogError("ERRO: Nenhuma MainCamera encontrada (Tag 'MainCamera')!");
+        if (Camera.main != null) _cameraTransform = Camera.main.transform;
+        else UnityEngine.Debug.LogError("[PlayerLocomotion] MainCamera nao encontrada!");
 
         _moveAction = _playerInput.actions.FindAction("Move");
         _sprintAction = _playerInput.actions.FindAction("Sprint");
@@ -68,136 +83,154 @@ public class PlayerLocomotion : MonoBehaviour
 
     void Update()
     {
+        if (!_isDead && Keyboard.current != null && Keyboard.current.xKey.wasPressedThisFrame)
+        {
+            Morrer();
+        }
+
         if (_isDead) return;
 
-        // DEBUG: Botão de morte rápida
-        if (Keyboard.current != null && Keyboard.current.xKey.wasPressedThisFrame) Morrer();
-
-        HandleMovement();
-        HandleGravity();
+        HandleMovementAndRotation();
         HandleJump();
+        ApplyGravity();
+    }
+
+    public void SetMovementRestricted(bool restricted)
+    {
+        _isMovementRestricted = restricted;
+        // Não zeramos mais a animação aqui forçadamente, deixamos o input ditar
     }
 
     public void SetLockOnTarget(Transform target)
     {
-        _lockOnTarget = target;
+        _currentTarget = target;
     }
 
-    private void HandleMovement()
+    void Morrer()
     {
-        // 1. Ler Inputs
-        Vector2 input = _moveAction.ReadValue<Vector2>();
+        _isDead = true;
+        _animator.SetTrigger(deathTriggerName);
+    }
 
-        // Verifica se o botão de correr está sendo segurado (Gatilho ou Shift)
-        // Usamos IsPressed() que funciona tanto para botões quanto para gatilhos analógicos pressionados fundo
-        bool isSprinting = _sprintAction != null && _sprintAction.IsPressed();
+    void HandleJump()
+    {
+        if (_isMovementRestricted) return; // Não pula atacando
 
-        // Zona Morta
-        if (input.magnitude < inputThreshold) input = Vector2.zero;
-        bool hasInput = input.sqrMagnitude > 0;
-
-        // 2. Calcular Direção
-        Vector3 moveDirection = Vector3.zero;
-
-        Vector3 camForward = _cameraTransform.forward;
-        Vector3 camRight = _cameraTransform.right;
-        camForward.y = 0; camRight.y = 0;
-        camForward.Normalize(); camRight.Normalize();
-
-        if (IsLockedOn)
+        if (_isGrounded)
         {
-            // MODO LOCK-ON:
-            // Movemos relativo à câmera, mas sem travar o movimento físico
-            moveDirection = (camForward * input.y) + (camRight * input.x);
+            bool jumpPressed = _jumpAction != null && _jumpAction.WasPressedThisFrame();
+            Vector2 inputVector = _moveAction.ReadValue<Vector2>();
+            bool isStandingStill = inputVector.sqrMagnitude == 0;
 
-            // Apenas gira o corpo para olhar o inimigo
-            HandleLockOnRotation();
+            if (jumpPressed && isStandingStill)
+            {
+                _playerVelocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+                _animator.SetTrigger(jumpTriggerName);
+            }
+        }
+    }
+
+    void HandleMovementAndRotation()
+    {
+        // 1. LEITURA DE INPUT
+        Vector2 inputVector = _moveAction.ReadValue<Vector2>();
+        if (inputVector.sqrMagnitude > 1) inputVector.Normalize();
+
+        bool isMoving = inputVector.sqrMagnitude > 0;
+        bool isSprinting = _sprintAction != null && _sprintAction.IsPressed();
+        bool isMovingBackwards = inputVector.y < -0.1f;
+
+        // 2. CÁLCULO DE DIREÇÃO DA CÂMERA
+        Vector3 cameraForward = _cameraTransform.forward;
+        Vector3 cameraRight = _cameraTransform.right;
+        cameraForward.y = 0; cameraRight.y = 0;
+        cameraForward.Normalize(); cameraRight.Normalize();
+
+        Vector3 moveDirection = cameraForward * inputVector.y + cameraRight * inputVector.x;
+
+        // 3. LÓGICA DE VELOCIDADE (AQUI MUDOU!)
+        float currentSpeed = 0f;
+
+        if (_isMovementRestricted)
+        {
+            // MODO ATAQUE: Velocidade fixa bem baixa (0.1)
+            currentSpeed = isMoving ? attackingSpeed : 0f;
         }
         else
         {
-            // MODO LIVRE:
-            moveDirection = (camForward * input.y) + (camRight * input.x);
-
-            if (hasInput)
+            // MODO NORMAL
+            if (isMoving)
             {
-                Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                if (isSprinting) currentSpeed = runSpeed;
+                else if (isMovingBackwards) currentSpeed = backwardsSpeed;
+                else currentSpeed = walkSpeed;
             }
         }
 
-        // 3. Aplica Velocidade (AQUI MUDOU)
-        if (hasInput)
+        // 4. ROTAÇÃO E MOVIMENTO
+        if (isMoving || IsLockedOn)
         {
-            float targetSpeed = walkSpeed;
-
-            // LÓGICA SIMPLIFICADA: Se apertou correr, CORRE. 
-            // Não importa se está andando para trás ou travado na mira.
-            if (isSprinting)
+            // --- ROTAÇÃO ---
+            // Só giramos via input se NÃO estivermos atacando (Restricted)
+            // Se estiver atacando, o Combat script cuida da rotação (LockOn) ou mantém fixo.
+            if (!_isMovementRestricted)
             {
-                targetSpeed = runSpeed;
-            }
-            else if (input.y < -0.1f && !IsLockedOn)
-            {
-                // Só diminui velocidade se estiver andando pra trás E sem mira
-                // Se estiver com mira, mantém walkSpeed normal para agilidade no combate
-                targetSpeed = backwardsSpeed;
+                if (IsLockedOn)
+                {
+                    Vector3 directionToTarget = _currentTarget.position - transform.position;
+                    directionToTarget.y = 0;
+                    if (directionToTarget != Vector3.zero)
+                    {
+                        Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
+                        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                    }
+
+                    // Correção Orbital no LockOn
+                    if (isMoving && Mathf.Abs(inputVector.x) > 0.1f)
+                    {
+                        Vector3 pullDirection = directionToTarget.normalized;
+                        moveDirection += pullDirection * orbitCorrectionStrength * Time.deltaTime;
+                    }
+                }
+                else if (cameraForward != Vector3.zero)
+                {
+                    Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
+                    transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                }
             }
 
-            _characterController.Move(moveDirection * targetSpeed * Time.deltaTime);
+            // --- APLICA O MOVIMENTO ---
+            if (currentSpeed > 0)
+            {
+                _characterController.Move(moveDirection * currentSpeed * Time.deltaTime);
+            }
+
+            // --- ANIMAÇÃO ---
+            // Se estiver atacando, talvez você queira manter os pés parados visualmente no Animator
+            // ou deixar mover um pouco. Vou deixar mover um pouco.
+            Vector3 localMoveDirection = transform.InverseTransformDirection(moveDirection);
+            float targetIntensity = isSprinting ? runIntensity : walkIntensity;
+
+            // Se estiver restrito, reduzimos a intensidade da animação de pernas também
+            if (_isMovementRestricted) targetIntensity = 0.1f;
+
+            float inputMagnitude = inputVector.magnitude;
+            _animator.SetFloat(inputXName, localMoveDirection.x * targetIntensity * inputMagnitude, animationSmoothTime, Time.deltaTime);
+            _animator.SetFloat(inputYName, localMoveDirection.z * targetIntensity * inputMagnitude, animationSmoothTime, Time.deltaTime);
         }
-
-        // 4. Animação
-        UpdateAnimation(moveDirection, isSprinting, input.magnitude);
-    }
-
-    private void HandleLockOnRotation()
-    {
-        if (_lockOnTarget == null) return;
-
-        Vector3 dirToTarget = _lockOnTarget.position - transform.position;
-        dirToTarget.y = 0;
-
-        if (dirToTarget != Vector3.zero)
+        else
         {
-            Quaternion targetRot = Quaternion.LookRotation(dirToTarget);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
+            // Parado
+            _animator.SetFloat(inputXName, 0, animationSmoothTime, Time.deltaTime);
+            _animator.SetFloat(inputYName, 0, animationSmoothTime, Time.deltaTime);
         }
     }
 
-    private void UpdateAnimation(Vector3 moveDir, bool isSprinting, float inputMag)
-    {
-        Vector3 localDir = transform.InverseTransformDirection(moveDir);
-
-        // Se está correndo, intensidade vai para 1.0, se andando 0.5
-        float intensity = isSprinting ? 1.0f : 0.5f;
-
-        if (inputMag < 0.1f) intensity = 0;
-
-        _animator.SetFloat(inputXName, localDir.x * intensity, animationSmoothTime, Time.deltaTime);
-        _animator.SetFloat(inputYName, localDir.z * intensity, animationSmoothTime, Time.deltaTime);
-    }
-
-    private void HandleGravity()
+    void ApplyGravity()
     {
         _isGrounded = _characterController.isGrounded;
         if (_isGrounded && _playerVelocity.y < 0) _playerVelocity.y = -2f;
-
         _playerVelocity.y += gravity * Time.deltaTime;
         _characterController.Move(_playerVelocity * Time.deltaTime);
-    }
-
-    private void HandleJump()
-    {
-        if (_isGrounded && _jumpAction.WasPressedThisFrame())
-        {
-            _playerVelocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            _animator.SetTrigger(jumpTrigger);
-        }
-    }
-
-    private void Morrer()
-    {
-        _isDead = true;
-        _animator.SetTrigger(dieTrigger);
     }
 }
