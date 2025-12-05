@@ -1,6 +1,5 @@
 ﻿using UnityEngine;
 using UnityEngine.InputSystem;
-// NÃO adicione 'using System.Diagnostics;' aqui
 
 [RequireComponent(typeof(PlayerLocomotion))]
 [RequireComponent(typeof(PlayerInput))]
@@ -67,7 +66,6 @@ public class PlayerCombat : MonoBehaviour
         if (_isAttacking && !_animator.IsInTransition(0))
         {
             AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
-            // Se já passamos do ponto ou não estamos mais no ataque
             if (!info.IsTag("Attack") && info.normalizedTime > 1.0f)
             {
                 if (showDebugLogs) UnityEngine.Debug.Log("[COMBATE] Watchdog: Forçando fim do ataque.");
@@ -78,10 +76,8 @@ public class PlayerCombat : MonoBehaviour
 
     private void OnAttackInput(InputAction.CallbackContext context)
     {
-        // 1. GATEKEEPER
         if (_isAttacking) return;
 
-        // 2. EQUIPAMENTO
         if (_equipment != null && !_equipment.IsEquipped)
         {
             if (showDebugLogs) UnityEngine.Debug.Log("[COMBATE] Falha: Espada não equipada.");
@@ -94,14 +90,8 @@ public class PlayerCombat : MonoBehaviour
     private void PerformAttack()
     {
         _isAttacking = true;
-
-        // Trava movimento
         _locomotion.SetMovementRestricted(true);
-
-        // Rotação (Apenas se tiver Lock-on)
         HandleAttackRotation();
-
-        // Toca animação
         _animator.SetTrigger(_attackTriggerHash);
 
         if (showDebugLogs) UnityEngine.Debug.Log("[COMBATE] Ataque Iniciado!");
@@ -120,8 +110,7 @@ public class PlayerCombat : MonoBehaviour
         }
     }
 
-    // --- EVENTOS DE ANIMAÇÃO ---
-
+    // --- AQUI ESTÁ A CORREÇÃO PRINCIPAL ---
     public void AnimEvent_DealDamage()
     {
         Vector3 origin = damageOriginPoint != null ? damageOriginPoint.position : transform.position + transform.forward * attackRange;
@@ -130,9 +119,20 @@ public class PlayerCombat : MonoBehaviour
         foreach (var hit in hits)
         {
             if (hit.gameObject == gameObject) continue;
-            if (showDebugLogs) UnityEngine.Debug.Log($"[COMBATE] Acertei: {hit.name}!");
+
+            // Busca pelo "Contrato" IDamageable
+            IDamageable target = hit.GetComponent<IDamageable>();
+
+            if (target != null)
+            {
+                // Aplica o dano real
+                target.TakeDamage(attackDamage);
+
+                if (showDebugLogs) UnityEngine.Debug.Log($"[COMBATE] Acertei: {hit.name} e causei {attackDamage} de dano!");
+            }
         }
     }
+    // --------------------------------------
 
     public void AnimEvent_EndAttack()
     {
