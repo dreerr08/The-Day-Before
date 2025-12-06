@@ -1,24 +1,29 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-// 1. A Estrutura de um único golpe
+// [CombatData.cs]
+// Mantivemos o AttackMove igual, mexemos apenas no SO principal.
+
 [System.Serializable]
 public struct AttackMove
 {
     [Header("Animação")]
-    public string animationTriggerName; // Ex: "Attack1"
+    public string animationTriggerName;
     [Range(0f, 1f)]
-    public float comboWindowStart;      // % da animação onde o próximo golpe é permitido (Ex: 0.6)
+    public float comboWindowStart;
 
     [Header("Impacto")]
-    public float damageMultiplier;      // Ex: 1.0, 1.2, 1.5
-    public float movementImpulse;       // Força para frente (Ex: 2.0)
+    public float damageMultiplier;
+    public float movementImpulse;
 }
 
-// 2. O Objeto que guarda a lista (ScriptableObject)
 [CreateAssetMenu(fileName = "NewWeaponCombo", menuName = "Combat/Weapon Combo")]
 public class WeaponComboSO : ScriptableObject
 {
     [Header("Configurações do Combo")]
-    public List<AttackMove> attacks; // Lista ordenada de golpes
+    public List<AttackMove> attacks;
+
+    [Header("Punição por Erro (Spam)")]
+    [Tooltip("Tempo em segundos que o jogador fica travado se clicar cedo demais.")]
+    public float penaltyDuration = 1.0f; // Novo campo!
 }

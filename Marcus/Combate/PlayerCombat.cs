@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 using UnityEngine.InputSystem;
-using System.Collections; // Necessário para Coroutines
+using System.Collections;
 
 [RequireComponent(typeof(PlayerLocomotion))]
 [RequireComponent(typeof(PlayerEquipment))]
@@ -8,15 +8,13 @@ using System.Collections; // Necessário para Coroutines
 public class PlayerCombat : MonoBehaviour
 {
     [Header("Configuração de Dados")]
-    [Tooltip("Arraste aqui o arquivo de Combo que criamos (WeaponComboSO)")]
     public WeaponComboSO currentWeaponCombo;
 
-    [Header("Progressão (RPG)")]
-    [Tooltip("Quantos golpes deste combo o jogador desbloqueou?")]
+    [Header("Progressão")]
     public int maxComboUnlocked = 3;
 
     [Header("Ajustes Finos")]
-    public float inputBufferTime = 0.2f; // Tempo que o clique "espera" na fila
+    public float inputBufferTime = 0.2f;
     public LayerMask hitLayers;
     public Transform damageOriginPoint;
     public float attackRadius = 0.8f;
@@ -26,6 +24,9 @@ public class PlayerCombat : MonoBehaviour
     private int _currentComboIndex = 0;
     private float _lastInputTime = -1f;
     private bool _isAttacking = false;
+
+    // NOVO: Estado de Punição
+    private bool _isPenalized = false;
 
     // Referências
     private Animator _animator;
@@ -40,53 +41,94 @@ public class PlayerCombat : MonoBehaviour
         _locomotion = GetComponent<PlayerLocomotion>();
         _equipment = GetComponent<PlayerEquipment>();
         _playerInput = GetComponent<PlayerInput>();
-
-        // Configura Input
         _attackAction = _playerInput.actions.FindAction("Attack");
     }
 
     void OnEnable() => _attackAction.performed += OnAttackInput;
     void OnDisable() => _attackAction.performed -= OnAttackInput;
 
-    // 1. O INPUT: Apenas registra a intenção (Buffer)
+    // --- AQUI ESTÁ A MÁGICA DA PUNIÇÃO ---
     private void OnAttackInput(InputAction.CallbackContext context)
     {
-        // Só aceita input se tiver arma equipada
+        // 1. Regras Básicas: Sem arma ou já punido? Ignora.
         if (_equipment != null && !_equipment.IsEquipped) return;
+        if (_isPenalized) return;
 
-        _lastInputTime = Time.time;
+        // 2. Se já estamos atacando, verificamos o timing AGORA.
+        if (_isAttacking)
+        {
+            bool canChain = CanContinueCombo();
+
+            if (canChain)
+            {
+                // JOGADA CERTA: Dentro da janela -> Bufferiza o input
+                _lastInputTime = Time.time;
+            }
+            else
+            {
+                // ERROU: Clicou cedo demais (Spam) -> Punição!
+                StartCoroutine(TriggerPenaltyRoutine());
+            }
+        }
+        else
+        {
+            // 3. Se estava parado, começa o ataque normalmente
+            _lastInputTime = Time.time;
+        }
+    }
+
+    // Corrotina para gerenciar o tempo de travamento
+    IEnumerator TriggerPenaltyRoutine()
+    {
+        _isPenalized = true;
+        _lastInputTime = -1f; // Limpa qualquer input salvo
+
+        // Feedback Visual (Provisório, mas vital para testes)
+        UnityEngine.Debug.Log($"<color=red><b>{gameObject.name} DESEQUILIBROU! (Spam Detectado)</b></color>");
+
+        // Opcional: Tocar uma animação de "Hit/Stumble" aqui se tiver
+        // _animator.SetTrigger("Stumble"); 
+
+        // Trava o movimento totalmente durante a punição
+        _locomotion.SetMovementRestricted(true);
+
+        // Espera o tempo definido na Arma (ScriptableObject)
+        float duration = currentWeaponCombo != null ? currentWeaponCombo.penaltyDuration : 1.0f;
+        yield return new WaitForSeconds(duration);
+
+        // Recuperação
+        _isPenalized = false;
+        _isAttacking = false; // Reseta o combo
+        _currentComboIndex = 0;
+        _locomotion.SetMovementRestricted(false); // Devolve o movimento
+
+        UnityEngine.Debug.Log("Recuperado do desequilíbrio.");
     }
 
     void Update()
     {
-        // Se não tiver combo configurado, não faz nada
         if (currentWeaponCombo == null || currentWeaponCombo.attacks.Count == 0) return;
+        if (_isPenalized) return; // Se punido, a máquina de estados não roda
 
         HandleCombatState();
     }
 
-    // 2. A MÁQUINA DE ESTADOS (Loop Principal)
     private void HandleCombatState()
     {
-        // Verifica se o Buffer ainda é válido (input recente)
         bool hasBufferedInput = (Time.time - _lastInputTime) <= inputBufferTime;
-
         if (!hasBufferedInput) return;
 
-        // CENÁRIO A: Começar do Zero (Idle -> Ataque 1)
         if (!_isAttacking)
         {
             StartComboAttack(0);
         }
-        // CENÁRIO B: Continuar Combo (Ataque 1 -> Ataque 2)
         else
         {
-            // Verifica se estamos na janela permitida do ataque ATUAL
+            // Nota: A verificação de 'CanContinueCombo' já foi feita no Input,
+            // mas mantemos aqui para garantir que a animação flua corretamente
             if (CanContinueCombo())
             {
                 int nextIndex = _currentComboIndex + 1;
-
-                // Verifica barreiras: Existe próximo golpe? O jogador desbloqueou?
                 if (nextIndex < currentWeaponCombo.attacks.Count && nextIndex < maxComboUnlocked)
                 {
                     StartComboAttack(nextIndex);
@@ -95,100 +137,74 @@ public class PlayerCombat : MonoBehaviour
         }
     }
 
-    // Verifica se a animação atual já passou do ponto de "ComboWindowStart"
     private bool CanContinueCombo()
     {
         AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
-
-        // Proteção: Se estiver em transição, não deixa clicar ainda para evitar bugs visuais
         if (_animator.IsInTransition(0)) return false;
 
-        // Pega os dados do ataque que está tocando AGORA
         AttackMove currentMove = currentWeaponCombo.attacks[_currentComboIndex];
-
-        // Verifica se o tempo normalizado da animação passou da janela definida no ScriptableObject
         return info.normalizedTime >= currentMove.comboWindowStart;
     }
 
-    // 3. EXECUÇÃO DO ATAQUE
     private void StartComboAttack(int index)
     {
-        // Consome o input do buffer
         _lastInputTime = -1f;
-
         _currentComboIndex = index;
         _isAttacking = true;
 
-        // Pega dados do novo ataque
         AttackMove move = currentWeaponCombo.attacks[index];
 
-        // A. Trava movimentação normal, mas permite gravidade
         _locomotion.SetMovementRestricted(true);
-
-        // B. Rotação (Game Feel): Vira para o inimigo OU para o input
         AlignPlayerBeforeAttack();
 
-        // C. Animação
-        _animator.Play(move.animationTriggerName, 0, 0f); // Toca do início (Play imediato é melhor que Trigger para combos rápidos)
+        _animator.Play(move.animationTriggerName, 0, 0f);
 
-        // D. Impulso (Juice): Empurra o boneco levemente
-        StopAllCoroutines();
+        StopAllCoroutines(); // Para impulsos anteriores
         StartCoroutine(ApplyAttackImpulse(move.movementImpulse));
     }
 
     private void AlignPlayerBeforeAttack()
     {
-        // Prioridade: Lock-On Target
         if (_locomotion.IsLockedOn && _locomotion.CurrentLockOnTarget != null)
         {
             Vector3 dir = _locomotion.CurrentLockOnTarget.position - transform.position;
             dir.y = 0;
             if (dir != Vector3.zero) transform.rotation = Quaternion.LookRotation(dir);
         }
-        // Secundário: Input de Movimento (Stick Esquerdo)
         else
         {
             Vector2 input = _playerInput.actions.FindAction("Move").ReadValue<Vector2>();
             if (input.sqrMagnitude > 0.1f)
             {
-                // Converte input 2D para direção 3D relativa à câmera
                 Vector3 camFwd = Camera.main.transform.forward;
                 Vector3 camRight = Camera.main.transform.right;
                 camFwd.y = 0; camRight.y = 0;
-
                 Vector3 moveDir = camFwd.normalized * input.y + camRight.normalized * input.x;
                 if (moveDir != Vector3.zero) transform.rotation = Quaternion.LookRotation(moveDir);
             }
         }
     }
 
-    // Coroutine para empurrar o personagem suavemente
     IEnumerator ApplyAttackImpulse(float force)
     {
         if (force <= 0.1f) yield break;
-
-        float duration = 0.2f; // Impulso rápido
+        float duration = 0.2f;
         float timer = 0f;
         CharacterController cc = GetComponent<CharacterController>();
 
         while (timer < duration)
         {
             timer += Time.deltaTime;
-            // Move para frente RELATIVO ao personagem
             cc.Move(transform.forward * force * (Time.deltaTime / duration));
             yield return null;
         }
     }
 
-    // --- EVENTOS DE ANIMAÇÃO (Hitbox) ---
-    // Mantenha seus Animation Events na Timeline da Animação para ligar o dano
     public void AnimEvent_DealDamage()
     {
-        // Calcula dano baseado no multiplicador do golpe atual
         float multiplier = currentWeaponCombo.attacks[_currentComboIndex].damageMultiplier;
         int finalDamage = Mathf.RoundToInt(baseDamage * multiplier);
 
-        // Detecta colisão
         Vector3 origin = damageOriginPoint != null ? damageOriginPoint.position : transform.position + transform.forward;
         Collider[] hits = Physics.OverlapSphere(origin, attackRadius, hitLayers);
 
@@ -204,22 +220,18 @@ public class PlayerCombat : MonoBehaviour
         }
     }
 
-    // IMPORTANTE: Adicione este evento no FINAL de cada animação de ataque
     public void AnimEvent_EndAttack()
     {
-        // Se a animação acabou e não iniciamos outro ataque, volta pra Idle
         _isAttacking = false;
         _currentComboIndex = 0;
-        _locomotion.SetMovementRestricted(false); // Libera WASD
+        _locomotion.SetMovementRestricted(false);
     }
 
-    // Segurança: Se algo der errado, reseta ao sair do estado de ataque
     void LateUpdate()
     {
         if (_isAttacking)
         {
             AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
-            // Se a animação mudou para "Locomotion" ou "Idle" sem passar pelo evento, reseta
             if (info.IsTag("Locomotion") || info.IsTag("Idle"))
             {
                 if (_isAttacking) AnimEvent_EndAttack();
