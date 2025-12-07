@@ -20,12 +20,10 @@ public class PlayerCombat : MonoBehaviour
     public float attackRadius = 0.8f;
     public int baseDamage = 10;
 
-    // --- ESTADOS INTERNOS ---
+    // Estados
     private int _currentComboIndex = 0;
     private float _lastInputTime = -1f;
     private bool _isAttacking = false;
-
-    // NOVO: Estado de Punição
     private bool _isPenalized = false;
 
     // Referências
@@ -47,69 +45,40 @@ public class PlayerCombat : MonoBehaviour
     void OnEnable() => _attackAction.performed += OnAttackInput;
     void OnDisable() => _attackAction.performed -= OnAttackInput;
 
-    // --- AQUI ESTÁ A MÁGICA DA PUNIÇÃO ---
     private void OnAttackInput(InputAction.CallbackContext context)
     {
-        // 1. Regras Básicas: Sem arma ou já punido? Ignora.
         if (_equipment != null && !_equipment.IsEquipped) return;
         if (_isPenalized) return;
 
-        // 2. Se já estamos atacando, verificamos o timing AGORA.
         if (_isAttacking)
         {
-            bool canChain = CanContinueCombo();
-
-            if (canChain)
-            {
-                // JOGADA CERTA: Dentro da janela -> Bufferiza o input
-                _lastInputTime = Time.time;
-            }
-            else
-            {
-                // ERROU: Clicou cedo demais (Spam) -> Punição!
-                StartCoroutine(TriggerPenaltyRoutine());
-            }
+            if (CanContinueCombo()) _lastInputTime = Time.time;
+            else StartCoroutine(TriggerPenaltyRoutine());
         }
         else
         {
-            // 3. Se estava parado, começa o ataque normalmente
             _lastInputTime = Time.time;
         }
     }
 
-    // Corrotina para gerenciar o tempo de travamento
     IEnumerator TriggerPenaltyRoutine()
     {
         _isPenalized = true;
-        _lastInputTime = -1f; // Limpa qualquer input salvo
-
-        // Feedback Visual (Provisório, mas vital para testes)
-        UnityEngine.Debug.Log($"<color=red><b>{gameObject.name} DESEQUILIBROU! (Spam Detectado)</b></color>");
-
-        // Opcional: Tocar uma animação de "Hit/Stumble" aqui se tiver
-        // _animator.SetTrigger("Stumble"); 
-
-        // Trava o movimento totalmente durante a punição
+        _lastInputTime = -1f;
+        UnityEngine.Debug.Log($"<color=red><b>{gameObject.name} DESEQUILIBROU!</b></color>");
         _locomotion.SetMovementRestricted(true);
-
-        // Espera o tempo definido na Arma (ScriptableObject)
         float duration = currentWeaponCombo != null ? currentWeaponCombo.penaltyDuration : 1.0f;
         yield return new WaitForSeconds(duration);
-
-        // Recuperação
         _isPenalized = false;
-        _isAttacking = false; // Reseta o combo
+        _isAttacking = false;
         _currentComboIndex = 0;
-        _locomotion.SetMovementRestricted(false); // Devolve o movimento
-
-        UnityEngine.Debug.Log("Recuperado do desequilíbrio.");
+        _locomotion.SetMovementRestricted(false);
     }
 
     void Update()
     {
         if (currentWeaponCombo == null || currentWeaponCombo.attacks.Count == 0) return;
-        if (_isPenalized) return; // Se punido, a máquina de estados não roda
-
+        if (_isPenalized) return;
         HandleCombatState();
     }
 
@@ -124,8 +93,6 @@ public class PlayerCombat : MonoBehaviour
         }
         else
         {
-            // Nota: A verificação de 'CanContinueCombo' já foi feita no Input,
-            // mas mantemos aqui para garantir que a animação flua corretamente
             if (CanContinueCombo())
             {
                 int nextIndex = _currentComboIndex + 1;
@@ -141,7 +108,6 @@ public class PlayerCombat : MonoBehaviour
     {
         AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
         if (_animator.IsInTransition(0)) return false;
-
         AttackMove currentMove = currentWeaponCombo.attacks[_currentComboIndex];
         return info.normalizedTime >= currentMove.comboWindowStart;
     }
@@ -159,7 +125,7 @@ public class PlayerCombat : MonoBehaviour
 
         _animator.Play(move.animationTriggerName, 0, 0f);
 
-        StopAllCoroutines(); // Para impulsos anteriores
+        StopAllCoroutines();
         StartCoroutine(ApplyAttackImpulse(move.movementImpulse));
     }
 
@@ -200,6 +166,37 @@ public class PlayerCombat : MonoBehaviour
         }
     }
 
+    // --- EVENTOS DE ANIMAÇÃO (Animation Events) ---
+
+    // Chame este evento no começo do balanço da espada
+    public void AnimEvent_StartTrail()
+    {
+        if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
+        {
+            _equipment.CurrentWeaponFeedback.SetTrailActive(true);
+        }
+    }
+
+    // Chame este evento no fim do balanço
+    public void AnimEvent_EndTrail()
+    {
+        if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
+        {
+            _equipment.CurrentWeaponFeedback.SetTrailActive(false);
+        }
+    }
+
+    // Chame este evento no momento de maior força do golpe
+    public void AnimEvent_PlaySwingSound()
+    {
+        if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
+        {
+            // Pega o som configurado no Scriptable Object do Combo
+            AudioClip clip = currentWeaponCombo.attacks[_currentComboIndex].swingSound;
+            _equipment.CurrentWeaponFeedback.PlaySlashSound(clip);
+        }
+    }
+
     public void AnimEvent_DealDamage()
     {
         float multiplier = currentWeaponCombo.attacks[_currentComboIndex].damageMultiplier;
@@ -215,7 +212,6 @@ public class PlayerCombat : MonoBehaviour
             if (target != null)
             {
                 target.TakeDamage(finalDamage);
-                UnityEngine.Debug.Log($"[COMBATE] Golpe {_currentComboIndex + 1} acertou {hit.name} ({finalDamage} dmg)");
             }
         }
     }
@@ -225,6 +221,8 @@ public class PlayerCombat : MonoBehaviour
         _isAttacking = false;
         _currentComboIndex = 0;
         _locomotion.SetMovementRestricted(false);
+        // Garante que o trail desligue se a animação for interrompida
+        AnimEvent_EndTrail();
     }
 
     void LateUpdate()

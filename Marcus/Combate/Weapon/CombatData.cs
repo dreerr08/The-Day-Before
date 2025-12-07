@@ -1,9 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-// [CombatData.cs]
-// Mantivemos o AttackMove igual, mexemos apenas no SO principal.
-
 [System.Serializable]
 public struct AttackMove
 {
@@ -15,6 +12,9 @@ public struct AttackMove
     [Header("Impacto")]
     public float damageMultiplier;
     public float movementImpulse;
+
+    [Header("Game Feel (Audio)")]
+    public AudioClip swingSound; // <--- NOVO: O som deste golpe específico
 }
 
 [CreateAssetMenu(fileName = "NewWeaponCombo", menuName = "Combat/Weapon Combo")]
@@ -24,6 +24,5 @@ public class WeaponComboSO : ScriptableObject
     public List<AttackMove> attacks;
 
     [Header("Punição por Erro (Spam)")]
-    [Tooltip("Tempo em segundos que o jogador fica travado se clicar cedo demais.")]
-    public float penaltyDuration = 1.0f; // Novo campo!
+    public float penaltyDuration = 1.0f;
 }

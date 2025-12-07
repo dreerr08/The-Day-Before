@@ -14,14 +14,18 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WeaponComboSO
   attacks:
   - animationTriggerName: Slash1
-    comboWindowStart: 0.352
+    comboWindowStart: 0.456
     damageMultiplier: 1
-    movementImpulse: 0.5
+    movementImpulse: 1
+    swingSound: {fileID: 0}
   - animationTriggerName: Slash2
-    comboWindowStart: 0.379
+    comboWindowStart: 0.39
     damageMultiplier: 1.3
     movementImpulse: 0.5
+    swingSound: {fileID: 0}
   - animationTriggerName: Slash4
-    comboWindowStart: 0.615
+    comboWindowStart: 0.555
     damageMultiplier: 2
-    movementImpulse: 1.5
+    movementImpulse: 2
+    swingSound: {fileID: 0}
+  penaltyDuration: 1
