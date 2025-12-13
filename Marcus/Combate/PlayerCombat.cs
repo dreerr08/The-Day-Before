@@ -42,6 +42,19 @@ public class PlayerCombat : MonoBehaviour
         _attackAction = _playerInput.actions.FindAction("Attack");
     }
 
+    // Adicione dentro da classe PlayerCombat
+    public void UpdateCombatData(WeaponItemData weaponData)
+    {
+        // Atualiza o combo
+        this.currentWeaponCombo = weaponData.weaponCombo;
+
+        // Atualiza o dano base
+        this.baseDamage = weaponData.baseDamage;
+
+        // Opcional: Aqui você pode resetar o índice do combo
+        _currentComboIndex = 0;
+    }
+
     void OnEnable() => _attackAction.performed += OnAttackInput;
     void OnDisable() => _attackAction.performed -= OnAttackInput;
 
