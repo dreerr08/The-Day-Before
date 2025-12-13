@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50551018c2bf4e44e8771848965d7f9e, type: 3}
+  m_Name: FerreiroData
+  m_EditorClassIdentifier: 
+  npcName: Grom
+  greetingText: "Ol\xE1, viajante. O que deseja saber?"
+  options:
+  - buttonText: O que podemos fazer?
+    responseText: Podemos reconstruir a cidade
+    endsDialogue: 0
+  - buttonText: O que podemos fazer? 2
+    responseText: Podemos reconstruir a cidade
+    endsDialogue: 0

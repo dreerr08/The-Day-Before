@@ -16,7 +16,7 @@ public class PlayerLocomotion : MonoBehaviour
     public float backwardsSpeed = 1.5f;
     public float runSpeed = 6.0f;
 
-    [Header("Combate / Restrição")] // <--- NOVO
+    [Header("Combate / Restrição")]
     [Tooltip("Velocidade permitida enquanto ataca (Ex: 0.1 para deslizar levemente)")]
     public float attackingSpeed = 0.1f;
 
@@ -60,8 +60,11 @@ public class PlayerLocomotion : MonoBehaviour
     private bool _isGrounded;
     private bool _isDead = false;
 
-    // ESTADO DE RESTRIÇÃO
+    // ESTADO DE RESTRIÇÃO (Ataque)
     private bool _isMovementRestricted = false;
+
+    // NOVO: ESTADO GLOBAL DE MOVIMENTO (Diálogos/Cutscenes)
+    private bool _canMove = true;
 
     // --- PROPRIEDADES PÚBLICAS ---
     public bool IsLockedOn => _currentTarget != null;
@@ -83,6 +86,7 @@ public class PlayerLocomotion : MonoBehaviour
 
     void Update()
     {
+        // Debug de morte manual
         if (!_isDead && Keyboard.current != null && Keyboard.current.xKey.wasPressedThisFrame)
         {
             Morrer();
@@ -90,21 +94,49 @@ public class PlayerLocomotion : MonoBehaviour
 
         if (_isDead) return;
 
+        // --- NOVO: BLOQUEIO DE DIÁLOGO ---
+        // Se não puder mover (está conversando), aplica apenas gravidade e sai.
+        if (!_canMove)
+        {
+            ApplyGravity();
+            return;
+        }
+
         HandleMovementAndRotation();
         HandleJump();
         ApplyGravity();
     }
 
+    // --- MÉTODOS PÚBLICOS ---
+
+    // Chamado pelo DialogueManager para congelar o personagem
+    public void ToggleMovement(bool canMove)
+    {
+        _canMove = canMove;
+
+        if (!_canMove)
+        {
+            // Zera a animação para ele parar visualmente agora
+            _animator.SetFloat(inputXName, 0);
+            _animator.SetFloat(inputYName, 0);
+
+            // Zera a velocidade residual horizontal (mantém Y para gravidade)
+            _playerVelocity.x = 0;
+            _playerVelocity.z = 0;
+        }
+    }
+
     public void SetMovementRestricted(bool restricted)
     {
         _isMovementRestricted = restricted;
-        // Não zeramos mais a animação aqui forçadamente, deixamos o input ditar
     }
 
     public void SetLockOnTarget(Transform target)
     {
         _currentTarget = target;
     }
+
+    // --- LÓGICA INTERNA ---
 
     void Morrer()
     {
@@ -148,12 +180,12 @@ public class PlayerLocomotion : MonoBehaviour
 
         Vector3 moveDirection = cameraForward * inputVector.y + cameraRight * inputVector.x;
 
-        // 3. LÓGICA DE VELOCIDADE (AQUI MUDOU!)
+        // 3. LÓGICA DE VELOCIDADE
         float currentSpeed = 0f;
 
         if (_isMovementRestricted)
         {
-            // MODO ATAQUE: Velocidade fixa bem baixa (0.1)
+            // MODO ATAQUE: Velocidade fixa bem baixa
             currentSpeed = isMoving ? attackingSpeed : 0f;
         }
         else
@@ -171,8 +203,6 @@ public class PlayerLocomotion : MonoBehaviour
         if (isMoving || IsLockedOn)
         {
             // --- ROTAÇÃO ---
-            // Só giramos via input se NÃO estivermos atacando (Restricted)
-            // Se estiver atacando, o Combat script cuida da rotação (LockOn) ou mantém fixo.
             if (!_isMovementRestricted)
             {
                 if (IsLockedOn)
@@ -206,12 +236,10 @@ public class PlayerLocomotion : MonoBehaviour
             }
 
             // --- ANIMAÇÃO ---
-            // Se estiver atacando, talvez você queira manter os pés parados visualmente no Animator
-            // ou deixar mover um pouco. Vou deixar mover um pouco.
             Vector3 localMoveDirection = transform.InverseTransformDirection(moveDirection);
             float targetIntensity = isSprinting ? runIntensity : walkIntensity;
 
-            // Se estiver restrito, reduzimos a intensidade da animação de pernas também
+            // Se estiver restrito (ataque), reduz a intensidade visual
             if (_isMovementRestricted) targetIntensity = 0.1f;
 
             float inputMagnitude = inputVector.magnitude;

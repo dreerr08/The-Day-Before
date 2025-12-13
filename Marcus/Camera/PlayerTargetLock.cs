@@ -32,6 +32,9 @@ public class PlayerTargetLock : MonoBehaviour
     private GameObject _currentIcon;
     private bool _isLocked = false;
 
+    // NOVO: Controle global do sistema (para Diálogos/Menus)
+    private bool _isSystemActive = true;
+
     void Awake()
     {
         _playerInput = GetComponent<PlayerInput>();
@@ -52,6 +55,9 @@ public class PlayerTargetLock : MonoBehaviour
 
     void Update()
     {
+        // NOVO: Se o sistema estiver pausado, não atualiza nada
+        if (!_isSystemActive) return;
+
         if (_isLocked)
         {
             CheckTargetStatus();
@@ -59,8 +65,28 @@ public class PlayerTargetLock : MonoBehaviour
         }
     }
 
+    // --- MÉTODOS PÚBLICOS ---
+
+    // Chamado pelo DialogueManager para desativar a mira durante conversas
+    public void ToggleLockSystem(bool isActive)
+    {
+        _isSystemActive = isActive;
+
+        // Se desativou o sistema e estava travado, destrava imediatamente
+        // para a câmera não ficar presa no inimigo enquanto fala com NPC.
+        if (!isActive && _isLocked)
+        {
+            Unlock();
+        }
+    }
+
+    // --- LÓGICA INTERNA ---
+
     private void OnLockInput(InputAction.CallbackContext context)
     {
+        // NOVO: Ignora input se o sistema estiver inativo
+        if (!_isSystemActive) return;
+
         if (_isLocked) Unlock();
         else TryToLock();
     }
