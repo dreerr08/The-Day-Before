@@ -25,6 +25,7 @@ public class PlayerCombat : MonoBehaviour
     private float _lastInputTime = -1f;
     private bool _isAttacking = false;
     private bool _isPenalized = false;
+    private bool _combatEnabled = true;
 
     // Referências
     private Animator _animator;
@@ -42,17 +43,31 @@ public class PlayerCombat : MonoBehaviour
         _attackAction = _playerInput.actions.FindAction("Attack");
     }
 
-    // Adicione dentro da classe PlayerCombat
     public void UpdateCombatData(WeaponItemData weaponData)
     {
-        // Atualiza o combo
         this.currentWeaponCombo = weaponData.weaponCombo;
-
-        // Atualiza o dano base
         this.baseDamage = weaponData.baseDamage;
-
-        // Opcional: Aqui você pode resetar o índice do combo
         _currentComboIndex = 0;
+    }
+
+    // ATUALIZADO: Agora controla também o Equipamento
+    public void SetCombatEnabled(bool isEnabled)
+    {
+        _combatEnabled = isEnabled;
+
+        // NOVO: Repassa a ordem para o sistema de equipamento
+        if (_equipment != null)
+        {
+            _equipment.SetInputEnabled(isEnabled);
+        }
+
+        if (!isEnabled)
+        {
+            _isAttacking = false;
+            _isPenalized = false;
+            StopAllCoroutines();
+            _locomotion.SetMovementRestricted(false);
+        }
     }
 
     void OnEnable() => _attackAction.performed += OnAttackInput;
@@ -60,6 +75,7 @@ public class PlayerCombat : MonoBehaviour
 
     private void OnAttackInput(InputAction.CallbackContext context)
     {
+        if (!_combatEnabled) return;
         if (_equipment != null && !_equipment.IsEquipped) return;
         if (_isPenalized) return;
 
@@ -179,32 +195,23 @@ public class PlayerCombat : MonoBehaviour
         }
     }
 
-    // --- EVENTOS DE ANIMAÇÃO (Animation Events) ---
-
-    // Chame este evento no começo do balanço da espada
+    // --- EVENTOS DE ANIMAÇÃO ---
     public void AnimEvent_StartTrail()
     {
         if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
-        {
             _equipment.CurrentWeaponFeedback.SetTrailActive(true);
-        }
     }
 
-    // Chame este evento no fim do balanço
     public void AnimEvent_EndTrail()
     {
         if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
-        {
             _equipment.CurrentWeaponFeedback.SetTrailActive(false);
-        }
     }
 
-    // Chame este evento no momento de maior força do golpe
     public void AnimEvent_PlaySwingSound()
     {
         if (_equipment != null && _equipment.CurrentWeaponFeedback != null)
         {
-            // Pega o som configurado no Scriptable Object do Combo
             AudioClip clip = currentWeaponCombo.attacks[_currentComboIndex].swingSound;
             _equipment.CurrentWeaponFeedback.PlaySlashSound(clip);
         }
@@ -222,10 +229,7 @@ public class PlayerCombat : MonoBehaviour
         {
             if (hit.gameObject == gameObject) continue;
             IDamageable target = hit.GetComponent<IDamageable>();
-            if (target != null)
-            {
-                target.TakeDamage(finalDamage);
-            }
+            if (target != null) target.TakeDamage(finalDamage);
         }
     }
 
@@ -234,7 +238,6 @@ public class PlayerCombat : MonoBehaviour
         _isAttacking = false;
         _currentComboIndex = 0;
         _locomotion.SetMovementRestricted(false);
-        // Garante que o trail desligue se a animação for interrompida
         AnimEvent_EndTrail();
     }
 

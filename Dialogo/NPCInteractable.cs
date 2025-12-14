@@ -1,31 +1,27 @@
 using UnityEngine;
-using UnityEngine.InputSystem; // Necessário para ler o teclado/controle
+using UnityEngine.InputSystem;
 
 public class NPCInteractable : MonoBehaviour
 {
     [Header("Configuração")]
-    public DialogueDataSO npcData; // Arraste o ScriptableObject aqui!
-    public string interactActionName = "Interact"; // Nome da ação no Input System
+    public DialogueDataSO npcData;
+    public string interactActionName = "Interact";
 
     [Header("Visual")]
-    public GameObject interactPrompt; // Ícone "Press E" (Opcional)
+    public GameObject interactPrompt;
 
     private bool _isPlayerNearby = false;
     private PlayerLocomotion _playerLocomotion;
     private PlayerTargetLock _playerLock;
+    private PlayerCombat _playerCombat;
+
+    // Armazenamos o PlayerInput para passar ao Manager
+    private PlayerInput _playerInput;
     private InputAction _interactAction;
 
     void Start()
     {
         if (interactPrompt) interactPrompt.SetActive(false);
-    }
-
-    // Configura Input quando entra/sai da cena ou habilita/desabilita
-    void OnEnable()
-    {
-        // Tenta achar o InputMap do Player se possível, ou usa polling no Update.
-        // Como o PlayerInput está no Player, faremos a leitura no Update para simplificar
-        // e não depender de referência direta complexa agora.
     }
 
     void OnTriggerEnter(Collider other)
@@ -35,12 +31,14 @@ public class NPCInteractable : MonoBehaviour
             _isPlayerNearby = true;
             _playerLocomotion = other.GetComponent<PlayerLocomotion>();
             _playerLock = other.GetComponent<PlayerTargetLock>();
+            _playerCombat = other.GetComponent<PlayerCombat>();
 
-            // Tenta pegar a ação de input do player
-            var playerInput = other.GetComponent<PlayerInput>();
-            if (playerInput != null)
+            // PEGA O INPUT COMPONENT AQUI
+            _playerInput = other.GetComponent<PlayerInput>();
+
+            if (_playerInput != null)
             {
-                _interactAction = playerInput.actions.FindAction(interactActionName);
+                _interactAction = _playerInput.actions.FindAction(interactActionName);
             }
 
             if (interactPrompt) interactPrompt.SetActive(true);
@@ -54,6 +52,8 @@ public class NPCInteractable : MonoBehaviour
             _isPlayerNearby = false;
             _playerLocomotion = null;
             _playerLock = null;
+            _playerCombat = null;
+            _playerInput = null; // Limpa referência
             _interactAction = null;
 
             if (interactPrompt) interactPrompt.SetActive(false);
@@ -64,11 +64,17 @@ public class NPCInteractable : MonoBehaviour
     {
         if (_isPlayerNearby && _interactAction != null && npcData != null)
         {
-            // Se apertou o botão E (ou botão Sul/Oeste)
             if (_interactAction.WasPressedThisFrame())
             {
-                // Chama o Manager
-                DialogueManager.Instance.StartDialogue(npcData, _playerLocomotion, _playerLock);
+                // ATUALIZADO: Passa _playerInput como último argumento
+                DialogueManager.Instance.StartDialogue(
+                    npcData,
+                    _playerLocomotion,
+                    _playerLock,
+                    _playerCombat,
+                    this.transform,
+                    _playerInput
+                );
             }
         }
     }

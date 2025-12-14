@@ -4,8 +4,7 @@ using System.Collections.Generic;
 [CreateAssetMenu(fileName = "NewNPCData", menuName = "Dialogue/Hub Data")]
 public class DialogueDataSO : ScriptableObject
 {
-    [Header("Identidade")]
-    public string npcName = "Aldeão";
+    // REMOVIDO: public string npcName;
 
     [Header("Texto Inicial")]
     [TextArea(3, 5)]
@@ -25,6 +24,6 @@ public class DialogueOption
     [TextArea(3, 10)]
     public string responseText;
 
-    [Tooltip("Se marcado, o diálogo fecha após essa resposta (Ex: 'Adeus').")]
+    [Tooltip("Se marcado, o diálogo fecha após essa resposta.")]
     public bool endsDialogue;
 }

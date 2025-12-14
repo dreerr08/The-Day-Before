@@ -1,115 +1,257 @@
 using UnityEngine;
-using UnityEngine.UI; // Importante para manipular Texto e Botões
-using TMPro; // Use este se estiver usando TextMeshPro (Recomendado!)
+using UnityEngine.UI;
+using TMPro;
+using System.Collections;
 using System.Collections.Generic;
+using Cinemachine;
+using UnityEngine.InputSystem;
+using UnityEngine.EventSystems; // <--- NECESSÁRIO PARA O CONTROLE FUNCIONAR
 
 public class DialogueManager : MonoBehaviour
 {
     public static DialogueManager Instance;
 
     [Header("UI References")]
-    public GameObject dialoguePanel; // O Painel inteiro (Canvas)
-    public TextMeshProUGUI nameText; // Nome do NPC
-    public TextMeshProUGUI bodyText; // Texto principal (Fala do NPC)
-    public Transform optionsContainer; // Onde os botões serão criados
-    public GameObject optionButtonPrefab; // O prefab do botão
-    public Button continueButton; // Botão de "Avançar" ou "Voltar" na resposta
+    public GameObject dialoguePanel;
+    public TextMeshProUGUI bodyText;
+    public Transform optionsContainer;
+    public GameObject optionButtonPrefab;
 
-    // Referências ao Player (Cache)
+    public Button closeButton;
+
+    [Header("Camera System")]
+    public CinemachineVirtualCamera dialogueCamera;
+    public float baseCameraDistance = 2.5f;
+    public float baseCameraHeight = 1.6f;
+
+    [Header("Settings")]
+    public float typeSpeed = 0.04f;
+
+    // --- ESTADOS DO DIÁLOGO ---
+    private enum DialogueState
+    {
+        Typing,
+        WaitingForNext,
+        ChoosingOption
+    }
+    private DialogueState _currentState;
+
+    // --- REFERÊNCIAS ---
     private PlayerLocomotion _playerLocomotion;
     private PlayerTargetLock _playerTargetLock;
+    private PlayerCombat _playerCombat;
+    private PlayerInput _playerInput;
 
-    // Estado Atual
+    // --- INPUT ACTIONS ---
+    private InputAction _nextAction;
+    private InputAction _quitAction;
+
+    // --- DADOS INTERNOS ---
     private DialogueDataSO _currentData;
+    private string _fullTextTarget;
+    private Coroutine _typingCoroutine;
 
     void Awake()
     {
-        // Singleton simples
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
 
-        // Começa desligado
         dialoguePanel.SetActive(false);
+        if (closeButton) closeButton.onClick.AddListener(EndDialogue);
     }
 
-    public void StartDialogue(DialogueDataSO data, PlayerLocomotion locomotion, PlayerTargetLock targetLock)
+    public void StartDialogue(DialogueDataSO data, PlayerLocomotion locomotion, PlayerTargetLock targetLock, PlayerCombat combat, Transform npcTransform, PlayerInput input)
     {
         _currentData = data;
         _playerLocomotion = locomotion;
         _playerTargetLock = targetLock;
+        _playerCombat = combat;
+        _playerInput = input;
 
-        // 1. Congela o Player
+        // 1. Configurar Inputs
+        if (_playerInput != null)
+        {
+            _nextAction = _playerInput.actions.FindAction("NextDialogue");
+            _quitAction = _playerInput.actions.FindAction("QuitDialogue");
+
+            if (_nextAction == null) UnityEngine.Debug.LogError("Ação 'NextDialogue' não encontrada no Input System!");
+            if (_quitAction == null) UnityEngine.Debug.LogError("Ação 'QuitDialogue' não encontrada no Input System!");
+        }
+
+        // 2. Congelar Player
         if (_playerLocomotion) _playerLocomotion.ToggleMovement(false);
         if (_playerTargetLock) _playerTargetLock.ToggleLockSystem(false);
+        if (_playerCombat) _playerCombat.SetCombatEnabled(false);
 
-        // 2. Abre a UI
+        // 3. Posicionar Câmera
+        if (dialogueCamera != null && npcTransform != null)
+        {
+            float scaleFactor = npcTransform.localScale.y;
+            Vector3 finalPos = npcTransform.position
+                               + (npcTransform.forward * (baseCameraDistance * scaleFactor))
+                               + (Vector3.up * (baseCameraHeight * scaleFactor));
+
+            dialogueCamera.Follow = null;
+            dialogueCamera.LookAt = null;
+            dialogueCamera.transform.position = finalPos;
+            Vector3 lookTarget = npcTransform.position + (Vector3.up * (baseCameraHeight * scaleFactor));
+            dialogueCamera.transform.LookAt(lookTarget);
+            dialogueCamera.Priority = 100;
+        }
+
+        // 4. Iniciar UI
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
         dialoguePanel.SetActive(true);
-        nameText.text = data.npcName;
 
-        // 3. Mostra o Hub Inicial
-        ShowHub();
+        // 5. Começar com a Saudação
+        StartTyping(data.greetingText);
     }
 
-    private void ShowHub()
+    void Update()
     {
-        // Texto de saudação
-        bodyText.text = _currentData.greetingText;
+        if (!dialoguePanel.activeSelf) return;
 
-        // Esconde botão de continuar (pois estamos escolhendo opção)
-        if (continueButton) continueButton.gameObject.SetActive(false);
+        // --- INPUT: QUIT ---
+        if (_quitAction != null && _quitAction.WasPressedThisFrame())
+        {
+            EndDialogue();
+            return;
+        }
+
+        // --- INPUT: NEXT ---
+        if (_nextAction != null && _nextAction.WasPressedThisFrame())
+        {
+            HandleNextInput();
+        }
+    }
+
+    private void HandleNextInput()
+    {
+        switch (_currentState)
+        {
+            case DialogueState.Typing:
+                CompleteTextImmediately();
+                break;
+
+            case DialogueState.WaitingForNext:
+                ShowOptions();
+                break;
+
+            case DialogueState.ChoosingOption:
+                // DEIXE VAZIO: O Input System UI Module vai cuidar do clique 
+                // quando apertar o botão de confirmação do controle (A ou X)
+                break;
+        }
+    }
+
+    // --- TYPEWRITER ---
+
+    private void StartTyping(string text)
+    {
+        foreach (Transform child in optionsContainer) Destroy(child.gameObject);
+
+        _fullTextTarget = text;
+        bodyText.text = "";
+        _currentState = DialogueState.Typing;
+
+        if (_typingCoroutine != null) StopCoroutine(_typingCoroutine);
+        _typingCoroutine = StartCoroutine(TypewriterRoutine());
+    }
+
+    private IEnumerator TypewriterRoutine()
+    {
+        foreach (char c in _fullTextTarget)
+        {
+            bodyText.text += c;
+            yield return new WaitForSeconds(typeSpeed);
+        }
+        OnTypingFinished();
+    }
+
+    private void CompleteTextImmediately()
+    {
+        if (_typingCoroutine != null) StopCoroutine(_typingCoroutine);
+        bodyText.text = _fullTextTarget;
+        OnTypingFinished();
+    }
+
+    private void OnTypingFinished()
+    {
+        _currentState = DialogueState.WaitingForNext;
+    }
+
+    // --- OPÇÕES (CORRIGIDO PARA CONTROLE) ---
+
+    private void ShowOptions()
+    {
+        _currentState = DialogueState.ChoosingOption;
 
         // Limpa botões antigos
         foreach (Transform child in optionsContainer) Destroy(child.gameObject);
 
-        // Cria novos botões
+        GameObject firstButton = null; // Armazena o primeiro botão criado
+
         foreach (var option in _currentData.options)
         {
             GameObject btnObj = Instantiate(optionButtonPrefab, optionsContainer);
-            // Pega o componente de Texto dentro do botão (ajuste conforme seu prefab)
             TextMeshProUGUI btnText = btnObj.GetComponentInChildren<TextMeshProUGUI>();
             if (btnText) btnText.text = option.buttonText;
 
-            // Configura o clique
             Button btn = btnObj.GetComponent<Button>();
             btn.onClick.AddListener(() => OnOptionSelected(option));
+
+            // Salva referência se for o primeiro
+            if (firstButton == null) firstButton = btnObj;
+        }
+
+        // CORREÇÃO PARA O CONTROLE XBOX:
+        // Força o sistema de eventos a selecionar o primeiro botão
+        if (firstButton != null)
+        {
+            // Limpa a seleção atual para garantir que o "highlight" visual atualize
+            EventSystem.current.SetSelectedGameObject(null);
+            // Seleciona o novo botão
+            EventSystem.current.SetSelectedGameObject(firstButton);
         }
     }
 
     private void OnOptionSelected(DialogueOption option)
     {
-        // Mostra a resposta
-        bodyText.text = option.responseText;
+        // Ao selecionar, tiramos o foco dos botões para evitar cliques duplos
+        EventSystem.current.SetSelectedGameObject(null);
 
-        // Limpa os botões de opção para focar no texto
-        foreach (Transform child in optionsContainer) Destroy(child.gameObject);
-
-        // Ativa o botão de "Continuar/Voltar"
-        if (continueButton)
+        if (option.endsDialogue)
         {
-            continueButton.gameObject.SetActive(true);
-            continueButton.onClick.RemoveAllListeners(); // Limpa cliques anteriores
-
-            if (option.endsDialogue)
-            {
-                // Se for opção de saída, fecha tudo
-                continueButton.GetComponentInChildren<TextMeshProUGUI>().text = "Sair";
-                continueButton.onClick.AddListener(EndDialogue);
-            }
-            else
-            {
-                // Se for info, volta para o Hub
-                continueButton.GetComponentInChildren<TextMeshProUGUI>().text = "Voltar";
-                continueButton.onClick.AddListener(ShowHub);
-            }
+            StartCoroutine(CloseAfterReading(option.responseText));
         }
+        else
+        {
+            StartTyping(option.responseText);
+        }
+    }
+
+    private IEnumerator CloseAfterReading(string text)
+    {
+        StartTyping(text);
+        while (_currentState == DialogueState.Typing) yield return null;
+        while (!_nextAction.WasPressedThisFrame()) yield return null;
+        EndDialogue();
     }
 
     public void EndDialogue()
     {
+        if (_typingCoroutine != null) StopCoroutine(_typingCoroutine);
+
         dialoguePanel.SetActive(false);
 
-        // Devolve o controle ao Player
         if (_playerLocomotion) _playerLocomotion.ToggleMovement(true);
         if (_playerTargetLock) _playerTargetLock.ToggleLockSystem(true);
+        if (_playerCombat) _playerCombat.SetCombatEnabled(true);
+
+        if (dialogueCamera != null) dialogueCamera.Priority = 0;
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
     }
 }
